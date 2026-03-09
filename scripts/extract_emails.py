@@ -2,10 +2,12 @@
 """
 从公司域名提取邮箱地址
 支持多种方式：官网爬取、WHOIS查询
+支持代理设置
 """
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -35,6 +37,23 @@ USER_AGENTS = [
 ]
 
 EMAIL_PATTERN = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
+
+PROXIES = None
+
+def init_proxies():
+    global PROXIES
+    http_proxy = os.environ.get('HTTP_PROXY') or os.environ.get('http_proxy')
+    https_proxy = os.environ.get('HTTPS_PROXY') or os.environ.get('https_proxy')
+    all_proxy = os.environ.get('ALL_PROXY') or os.environ.get('all_proxy')
+    
+    if https_proxy:
+        PROXIES = {'http': https_proxy, 'https': https_proxy}
+    elif http_proxy:
+        PROXIES = {'http': http_proxy, 'https': http_proxy}
+    elif all_proxy:
+        PROXIES = {'http': all_proxy, 'https': all_proxy}
+    
+    return PROXIES
 
 EXCLUDE_EMAIL_PATTERNS = [
     'example.com', 'test.com', 'sample.com', 'domain.com', 'email.com',
@@ -107,7 +126,8 @@ def extract_emails_from_page(url, domain):
             headers=get_random_headers(),
             timeout=10,
             verify=False,
-            allow_redirects=True
+            allow_redirects=True,
+            proxies=PROXIES
         )
         
         if response.status_code != 200:
@@ -221,6 +241,7 @@ def prioritize_emails(emails, domain):
 
 
 def extract_emails(domain, use_whois=True):
+    init_proxies()
     all_emails = set()
     
     print(f"Extracting emails from {domain}...", file=sys.stderr)
@@ -247,8 +268,13 @@ def main():
     parser.add_argument('domain', help='Domain name (e.g., example.com)')
     parser.add_argument('--no-whois', action='store_true', help='Skip WHOIS lookup')
     parser.add_argument('--output', '-o', help='Output file path (JSON)')
+    parser.add_argument('--proxy', '-p', help='Proxy URL (e.g., http://127.0.0.1:7890)')
     
     args = parser.parse_args()
+    
+    if args.proxy:
+        os.environ['HTTPS_PROXY'] = args.proxy
+        os.environ['HTTP_PROXY'] = args.proxy
     
     emails = extract_emails(args.domain, use_whois=not args.no_whois)
     

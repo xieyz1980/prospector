@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 搜索潜在客户公司
-支持多搜索引擎：DuckDuckGo、Bing、百度
+支持多搜索引擎：百度、Bing、DuckDuckGo
+支持代理设置
 """
 
 import argparse
@@ -10,6 +11,7 @@ import re
 import time
 import random
 import sys
+import os
 from urllib.parse import quote, urlparse, unquote
 import requests
 from bs4 import BeautifulSoup
@@ -29,12 +31,32 @@ EXCLUDE_DOMAINS = [
     'duckduckgo.com', 'wikipedia.org', 'medium.com', 'reddit.com',
 ]
 
+PROXIES = None
+
+def init_proxies():
+    global PROXIES
+    http_proxy = os.environ.get('HTTP_PROXY') or os.environ.get('http_proxy')
+    https_proxy = os.environ.get('HTTPS_PROXY') or os.environ.get('https_proxy')
+    all_proxy = os.environ.get('ALL_PROXY') or os.environ.get('all_proxy')
+    
+    if https_proxy:
+        PROXIES = {'http': https_proxy, 'https': https_proxy}
+    elif http_proxy:
+        PROXIES = {'http': http_proxy, 'https': http_proxy}
+    elif all_proxy:
+        PROXIES = {'http': all_proxy, 'https': all_proxy}
+    
+    if PROXIES:
+        print(f"Using proxy: {PROXIES.get('https', 'N/A')}", file=sys.stderr)
+    
+    return PROXIES
+
 
 def get_random_headers():
     return {
         'User-Agent': random.choice(USER_AGENTS),
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         'Accept-Encoding': 'gzip, deflate',
         'Connection': 'keep-alive',
     }
@@ -57,6 +79,76 @@ def clean_company_name(title):
     return title
 
 
+def baidu_search(query, limit=50):
+    results = []
+    url = f"https://www.baidu.com/s?wd={quote(query)}&rn={min(limit, 50)}"
+    
+    try:
+        response = requests.get(url, headers=get_random_headers(), timeout=15, proxies=PROXIES)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        for div in soup.select('div.result'):
+            title_elem = div.select_one('h3')
+            link_elem = div.select_one('a')
+            
+            if title_elem and link_elem:
+                link = link_elem.get('href', '')
+                domain = urlparse(link).netloc.replace('www.', '')
+                
+                if is_valid_domain(domain):
+                    results.append({
+                        'name': clean_company_name(title_elem.text),
+                        'domain': domain,
+                        'url': link,
+                        'description': '',
+                        'source': 'baidu'
+                    })
+                
+                if len(results) >= limit:
+                    break
+                    
+    except Exception as e:
+        print(f"Baidu search error: {e}", file=sys.stderr)
+    
+    return results
+
+
+def bing_search(query, limit=50):
+    results = []
+    url = f"https://www.bing.com/search?q={quote(query)}&count={min(limit, 50)}"
+    
+    try:
+        response = requests.get(url, headers=get_random_headers(), timeout=15, proxies=PROXIES)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        for li in soup.select('li.b_algo'):
+            title_elem = li.select_one('h2')
+            link_elem = li.select_one('a')
+            snippet_elem = li.select_one('p') or li.select_one('.b_caption p')
+            
+            if title_elem and link_elem:
+                href = link_elem.get('href', '')
+                
+                if href.startswith('/ck/a?'):
+                    continue
+                
+                domain = urlparse(href).netloc.replace('www.', '')
+                
+                if is_valid_domain(domain):
+                    results.append({
+                        'name': clean_company_name(title_elem.text),
+                        'domain': domain,
+                        'url': href,
+                        'description': snippet_elem.text if snippet_elem else '',
+                        'source': 'bing'
+                    })
+                    
+    except Exception as e:
+        print(f"Bing search error: {e}", file=sys.stderr)
+    
+    return results
+
+
 def duckduckgo_search(query, limit=50):
     results = []
     url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
@@ -65,7 +157,7 @@ def duckduckgo_search(query, limit=50):
         headers = get_random_headers()
         headers['Referer'] = 'https://duckduckgo.com/'
         
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=15, proxies=PROXIES)
         soup = BeautifulSoup(response.text, 'html.parser')
         
         for result in soup.select('.result'):
@@ -100,84 +192,9 @@ def duckduckgo_search(query, limit=50):
     return results
 
 
-def bing_search(query, limit=50):
-    results = []
-    url = f"https://www.bing.com/search?q={quote(query)}&count={min(limit, 50)}"
-    
-    try:
-        response = requests.get(url, headers=get_random_headers(), timeout=15)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        for li in soup.select('li.b_algo'):
-            title_elem = li.select_one('h2')
-            link_elem = li.select_one('a')
-            snippet_elem = li.select_one('p') or li.select_one('.b_caption p')
-            
-            if title_elem and link_elem:
-                href = link_elem.get('href', '')
-                
-                if href.startswith('/ck/a?'):
-                    continue
-                
-                domain = urlparse(href).netloc.replace('www.', '')
-                
-                if is_valid_domain(domain):
-                    results.append({
-                        'name': clean_company_name(title_elem.text),
-                        'domain': domain,
-                        'url': href,
-                        'description': snippet_elem.text if snippet_elem else '',
-                        'source': 'bing'
-                    })
-                    
-    except Exception as e:
-        print(f"Bing search error: {e}", file=sys.stderr)
-    
-    return results
-
-
-def baidu_search(query, limit=50):
-    results = []
-    pages = min((limit // 10) + 1, 5)
-    
-    for page in range(pages):
-        pn = page * 10
-        url = f"https://www.baidu.com/s?wd={quote(query)}&pn={pn}&rn=10"
-        
-        try:
-            response = requests.get(url, headers=get_random_headers(), timeout=15)
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            for div in soup.select('div.result'):
-                title_elem = div.select_one('h3')
-                link_elem = div.select_one('a')
-                
-                if title_elem and link_elem:
-                    link = link_elem.get('href', '')
-                    domain = urlparse(link).netloc.replace('www.', '')
-                    
-                    if is_valid_domain(domain):
-                        results.append({
-                            'name': clean_company_name(title_elem.text),
-                            'domain': domain,
-                            'url': link,
-                            'description': '',
-                            'source': 'baidu'
-                        })
-            
-            if len(results) >= limit:
-                break
-                
-            time.sleep(random.uniform(1, 3))
-            
-        except Exception as e:
-            print(f"Baidu search error: {e}", file=sys.stderr)
-            continue
-    
-    return results[:limit]
-
-
 def search_companies(keyword, region=None, limit=50):
+    init_proxies()
+    
     query = keyword
     if region:
         query = f"{region} {keyword}"
@@ -187,7 +204,7 @@ def search_companies(keyword, region=None, limit=50):
     
     print(f"Searching: {query}", file=sys.stderr)
     
-    for search_func in [duckduckgo_search, bing_search, baidu_search]:
+    for search_func in [baidu_search, bing_search, duckduckgo_search]:
         try:
             results = search_func(query, limit)
             print(f"  {search_func.__name__}: found {len(results)} valid results", file=sys.stderr)
@@ -215,8 +232,13 @@ def main():
     parser.add_argument('--region', '-r', help='Region filter (e.g., 上海, 北京)')
     parser.add_argument('--limit', '-l', type=int, default=50, help='Maximum number of results')
     parser.add_argument('--output', '-o', help='Output file path (JSON)')
+    parser.add_argument('--proxy', '-p', help='Proxy URL (e.g., http://127.0.0.1:7890)')
     
     args = parser.parse_args()
+    
+    if args.proxy:
+        os.environ['HTTPS_PROXY'] = args.proxy
+        os.environ['HTTP_PROXY'] = args.proxy
     
     results = search_companies(args.keyword, args.region, args.limit)
     
