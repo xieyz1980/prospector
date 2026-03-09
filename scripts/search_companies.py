@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 搜索潜在客户公司
-支持多搜索引擎：Google、DuckDuckGo、Bing、百度、Searx
+智能多搜索引擎：自动检测可用引擎、失败自动切换、多引擎汇总
 支持代理设置
 """
 
@@ -30,41 +30,55 @@ EXCLUDE_DOMAINS = [
     'github.com', 'gitlab.com', 'gitee.com', 'csdn.net', 'juejin.cn',
     'duckduckgo.com', 'wikipedia.org', 'medium.com', 'reddit.com',
     'pinterest.com', 'tumblr.com', 'quora.com', 'stackoverflow.com',
+    'sogou.com', 'so.com', '360.cn', 'baike.baidu.com',
 ]
 
 PROXIES = None
+AVAILABLE_ENGINES = {}
 
 SEARCH_ENGINES = {
-    'google': {
-        'name': 'Google',
-        'requires_proxy': True,
-        'blocked_in': ['China', 'Iran', 'North Korea', 'Russia'],
-        'description': '全球最大搜索引擎，结果质量最高'
+    'baidu': {
+        'name': '百度',
+        'test_url': 'https://www.baidu.com',
+        'priority': 1,
+        'description': '中国最大搜索引擎，适合搜索中文内容'
+    },
+    'sogou': {
+        'name': '搜狗',
+        'test_url': 'https://www.sogou.com',
+        'priority': 2,
+        'description': '中国搜索引擎，支持微信搜索'
+    },
+    'so': {
+        'name': '360搜索',
+        'test_url': 'https://www.so.com',
+        'priority': 3,
+        'description': '360搜索引擎，中国可用'
     },
     'duckduckgo': {
         'name': 'DuckDuckGo',
-        'requires_proxy': False,
-        'blocked_in': [],
-        'description': '注重隐私的搜索引擎，无需代理'
-    },
-    'bing': {
-        'name': 'Bing',
-        'requires_proxy': False,
-        'blocked_in': ['China'],
-        'description': '微软搜索引擎，结果质量较好'
-    },
-    'baidu': {
-        'name': '百度',
-        'requires_proxy': False,
-        'blocked_in': [],
-        'description': '中国最大搜索引擎，适合搜索中文内容'
+        'test_url': 'https://duckduckgo.com',
+        'priority': 4,
+        'description': '注重隐私的搜索引擎，全球可用'
     },
     'searx': {
         'name': 'Searx',
-        'requires_proxy': False,
-        'blocked_in': [],
+        'test_url': 'https://searx.be',
+        'priority': 5,
         'description': '开源元搜索引擎，聚合多个搜索结果'
-    }
+    },
+    'bing': {
+        'name': 'Bing',
+        'test_url': 'https://www.bing.com',
+        'priority': 6,
+        'description': '微软搜索引擎，结果质量较好'
+    },
+    'google': {
+        'name': 'Google',
+        'test_url': 'https://www.google.com',
+        'priority': 7,
+        'description': '全球最大搜索引擎，结果质量最高（部分地区需要代理）'
+    },
 }
 
 
@@ -114,8 +128,49 @@ def clean_company_name(title):
     return title
 
 
+def test_engine_availability(engine_key):
+    """测试单个搜索引擎是否可用"""
+    engine = SEARCH_ENGINES.get(engine_key)
+    if not engine:
+        return False
+    
+    try:
+        response = requests.get(
+            engine['test_url'],
+            headers=get_random_headers(),
+            timeout=5,
+            proxies=PROXIES
+        )
+        return response.status_code == 200
+    except:
+        return False
+
+
+def detect_available_engines():
+    """检测所有可用的搜索引擎"""
+    global AVAILABLE_ENGINES
+    print("正在检测可用的搜索引擎...", file=sys.stderr)
+    
+    available = {}
+    for engine_key, engine_info in SEARCH_ENGINES.items():
+        is_available = test_engine_availability(engine_key)
+        engine_info['available'] = is_available
+        available[engine_key] = engine_info
+        status = "✓ 可用" if is_available else "✗ 不可用"
+        print(f"  {engine_info['name']}: {status}", file=sys.stderr)
+    
+    AVAILABLE_ENGINES = available
+    return available
+
+
+def get_sorted_engines():
+    """获取按优先级排序的可用引擎列表"""
+    available = [k for k, v in AVAILABLE_ENGINES.items() if v.get('available', False)]
+    return sorted(available, key=lambda x: SEARCH_ENGINES[x]['priority'])
+
+
 def google_search(query, limit=50):
-    """Google搜索 - 需要代理访问"""
+    """Google搜索"""
     results = []
     url = f"https://www.google.com/search?q={quote(query)}&num={min(limit, 100)}&hl=zh-CN"
     
@@ -154,7 +209,7 @@ def google_search(query, limit=50):
 
 
 def duckduckgo_search(query, limit=50):
-    """DuckDuckGo搜索 - 无需代理"""
+    """DuckDuckGo搜索"""
     results = []
     url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
     
@@ -198,12 +253,16 @@ def duckduckgo_search(query, limit=50):
 
 
 def bing_search(query, limit=50):
-    """Bing搜索 - 部分地区需要代理"""
+    """Bing搜索"""
     results = []
-    url = f"https://www.bing.com/search?q={quote(query)}&count={min(limit, 50)}"
+    url = f"https://www.bing.com/search?q={quote(query)}&count={min(limit, 50)}&setlang=en&cc=us"
     
     try:
-        response = requests.get(url, headers=get_random_headers(), timeout=15, proxies=PROXIES)
+        headers = get_random_headers()
+        headers['Accept-Language'] = 'en-US,en;q=0.9'
+        headers['Cookie'] = 'SRCHHPGUSR=SRCHLANG=en; _EDGE_S=ui=en-us; _EDGE_V=1;'
+        
+        response = requests.get(url, headers=headers, timeout=15, proxies=PROXIES)
         soup = BeautifulSoup(response.text, 'html.parser')
         
         for li in soup.select('li.b_algo'):
@@ -235,12 +294,20 @@ def bing_search(query, limit=50):
 
 
 def baidu_search(query, limit=50):
-    """百度搜索 - 无需代理，适合中文"""
+    """百度搜索"""
     results = []
     url = f"https://www.baidu.com/s?wd={quote(query)}&rn={min(limit, 50)}"
     
     try:
-        response = requests.get(url, headers=get_random_headers(), timeout=15, proxies=PROXIES)
+        headers = get_random_headers()
+        headers['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        headers['Cache-Control'] = 'max-age=0'
+        
+        response = requests.get(url, headers=headers, timeout=15, proxies=PROXIES)
+        
+        if '安全验证' in response.text or len(response.text) < 2000:
+            return results
+        
         soup = BeautifulSoup(response.text, 'html.parser')
         
         for div in soup.select('div.result'):
@@ -269,6 +336,86 @@ def baidu_search(query, limit=50):
     return results
 
 
+def sogou_search(query, limit=50):
+    """搜狗搜索"""
+    results = []
+    url = f"https://www.sogou.com/web?query={quote(query)}&num={min(limit, 50)}"
+    
+    try:
+        headers = get_random_headers()
+        
+        response = requests.get(url, headers=headers, timeout=15, proxies=PROXIES)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        for div in soup.select('div.vrwrap'):
+            title_elem = div.select_one('h3 a') or div.select_one('a')
+            snippet_elem = div.select_one('p.str-text-info') or div.select_one('p')
+            
+            if title_elem:
+                href = title_elem.get('href', '')
+                
+                if href.startswith('/link?'):
+                    actual_url = unquote(href.split('url=')[-1].split('&')[0]) if 'url=' in href else href
+                else:
+                    actual_url = href
+                
+                domain = urlparse(actual_url).netloc.replace('www.', '')
+                
+                if is_valid_domain(domain):
+                    results.append({
+                        'name': clean_company_name(title_elem.text),
+                        'domain': domain,
+                        'url': actual_url,
+                        'description': snippet_elem.text if snippet_elem else '',
+                        'source': 'sogou'
+                    })
+                
+                if len(results) >= limit:
+                    break
+                    
+    except Exception as e:
+        print(f"Sogou search error: {e}", file=sys.stderr)
+    
+    return results
+
+
+def so_search(query, limit=50):
+    """360搜索"""
+    results = []
+    url = f"https://www.so.com/s?q={quote(query)}&pn=1"
+    
+    try:
+        headers = get_random_headers()
+        
+        response = requests.get(url, headers=headers, timeout=15, proxies=PROXIES)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        for li in soup.select('li.res-list'):
+            title_elem = li.select_one('h3 a')
+            snippet_elem = li.select_one('p.res-desc') or li.select_one('p')
+            
+            if title_elem:
+                href = title_elem.get('href', '')
+                domain = urlparse(href).netloc.replace('www.', '')
+                
+                if is_valid_domain(domain):
+                    results.append({
+                        'name': clean_company_name(title_elem.text),
+                        'domain': domain,
+                        'url': href,
+                        'description': snippet_elem.text if snippet_elem else '',
+                        'source': 'so'
+                    })
+                
+                if len(results) >= limit:
+                    break
+                    
+    except Exception as e:
+        print(f"360 search error: {e}", file=sys.stderr)
+    
+    return results
+
+
 def searx_search(query, limit=50):
     """Searx搜索 - 开源元搜索引擎"""
     results = []
@@ -276,6 +423,8 @@ def searx_search(query, limit=50):
         'https://searx.be',
         'https://search.sapti.me',
         'https://search.bus-hit.me',
+        'https://search.rowie.at',
+        'https://searx.fmac.xyz',
     ]
     
     for instance in searx_instances:
@@ -287,14 +436,14 @@ def searx_search(query, limit=50):
             data = response.json()
             
             for result in data.get('results', []):
-                url = result.get('url', '')
-                domain = urlparse(url).netloc.replace('www.', '')
+                result_url = result.get('url', '')
+                domain = urlparse(result_url).netloc.replace('www.', '')
                 
                 if is_valid_domain(domain):
                     results.append({
                         'name': clean_company_name(result.get('title', '')),
                         'domain': domain,
-                        'url': url,
+                        'url': result_url,
                         'description': result.get('content', ''),
                         'source': 'searx'
                     })
@@ -314,6 +463,7 @@ def searx_search(query, limit=50):
 
 def search_companies(keyword, region=None, limit=50, engines=None):
     init_proxies()
+    detect_available_engines()
     
     query = keyword
     if region:
@@ -321,58 +471,89 @@ def search_companies(keyword, region=None, limit=50, engines=None):
     
     all_results = []
     seen_domains = set()
+    engine_stats = {}
     
-    print(f"Searching: {query}", file=sys.stderr)
+    print(f"\n搜索关键词: {query}", file=sys.stderr)
+    print(f"目标数量: {limit}", file=sys.stderr)
     
     if engines is None:
-        engines = ['google', 'duckduckgo', 'bing', 'baidu', 'searx']
+        engines = get_sorted_engines()
+    else:
+        engines = [e for e in engines if e in SEARCH_ENGINES]
     
     search_functions = {
         'google': google_search,
         'duckduckgo': duckduckgo_search,
         'bing': bing_search,
         'baidu': baidu_search,
+        'sogou': sogou_search,
+        'so': so_search,
         'searx': searx_search,
     }
     
+    print(f"\n开始搜索...", file=sys.stderr)
+    
     for engine in engines:
+        if len(all_results) >= limit:
+            break
+        
         if engine not in search_functions:
             continue
-            
+        
+        if not AVAILABLE_ENGINES.get(engine, {}).get('available', False):
+            print(f"  {SEARCH_ENGINES[engine]['name']}: 跳过（不可用）", file=sys.stderr)
+            continue
+        
         search_func = search_functions[engine]
         engine_info = SEARCH_ENGINES.get(engine, {})
         
         try:
             results = search_func(query, limit)
-            print(f"  {engine_info.get('name', engine)}: found {len(results)} valid results", file=sys.stderr)
+            new_results = 0
             
             for r in results:
                 domain = r['domain']
                 if domain not in seen_domains:
                     seen_domains.add(domain)
                     all_results.append(r)
-                    
+                    new_results += 1
+            
+            engine_stats[engine] = {
+                'total': len(results),
+                'new': new_results
+            }
+            
+            print(f"  {engine_info.get('name', engine)}: 找到 {len(results)} 条，新增 {new_results} 条", file=sys.stderr)
+            
             if len(all_results) >= limit:
                 break
                 
         except Exception as e:
-            print(f"{engine} search error: {e}", file=sys.stderr)
+            print(f"  {engine_info.get('name', engine)}: 搜索失败 - {e}", file=sys.stderr)
+            engine_stats[engine] = {'total': 0, 'new': 0, 'error': str(e)}
             continue
     
-    print(f"  Total results: {len(all_results)}", file=sys.stderr)
-    return all_results[:limit]
+    print(f"\n汇总结果: {len(all_results)} 家公司", file=sys.stderr)
+    
+    return {
+        'results': all_results[:limit],
+        'engine_stats': engine_stats,
+        'available_engines': [SEARCH_ENGINES[e]['name'] for e in get_sorted_engines()]
+    }
 
 
 def list_engines():
     """列出所有支持的搜索引擎"""
+    init_proxies()
+    detect_available_engines()
+    
     print("\n支持的搜索引擎：")
     print("=" * 70)
     for key, info in SEARCH_ENGINES.items():
-        proxy_status = "需要代理" if info['requires_proxy'] else "无需代理"
-        blocked = f"被屏蔽: {', '.join(info['blocked_in'])}" if info['blocked_in'] else "全球可用"
+        status = "✓ 可用" if info.get('available', False) else "✗ 不可用"
         print(f"\n{info['name']} ({key}):")
-        print(f"  状态: {proxy_status}")
-        print(f"  限制: {blocked}")
+        print(f"  状态: {status}")
+        print(f"  优先级: {info['priority']}")
         print(f"  说明: {info['description']}")
     print("\n" + "=" * 70)
 
@@ -403,13 +584,15 @@ def main():
     
     engines = args.engines.split(',') if args.engines else None
     
-    results = search_companies(args.keyword, args.region, args.limit, engines)
+    search_result = search_companies(args.keyword, args.region, args.limit, engines)
     
     output = {
         'query': args.keyword,
         'region': args.region,
-        'total': len(results),
-        'results': results
+        'total': len(search_result['results']),
+        'engine_stats': search_result['engine_stats'],
+        'available_engines': search_result['available_engines'],
+        'results': search_result['results']
     }
     
     if args.output:
