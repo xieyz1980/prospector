@@ -4,12 +4,13 @@ OpenClaw Skill - 潜在客户挖掘器，自动搜索潜在客户并提取联系
 
 ## 功能特性
 
-- 🔍 **多搜索引擎支持**：DuckDuckGo、Bing、百度
+- 🔍 **多搜索引擎支持**：Google、DuckDuckGo、Bing、百度、Searx
 - 📧 **智能邮箱提取**：官网爬取 + WHOIS查询
 - ✅ **邮箱验证**：格式验证 + DNS检查
 - 💾 **本地缓存**：自动缓存，避免重复搜索
 - 🔄 **智能排重**：跳过已存在的公司
--  **数据统计**：查看累计数据
+- 🌐 **代理支持**：支持 HTTP/HTTPS 代理
+- 📊 **数据统计**：查看累计数据
 - 📤 **多格式导出**：JSON / CSV
 
 ## 快速开始
@@ -111,6 +112,15 @@ python scripts/search_companies.py "software company"
 # 指定地区和数量
 python scripts/search_companies.py "软件开发" --region "上海" --limit 50
 
+# 指定搜索引擎
+python scripts/search_companies.py "软件开发" --engines google,duckduckgo
+
+# 使用代理
+python scripts/search_companies.py "software company" --proxy http://127.0.0.1:7890
+
+# 查看支持的搜索引擎
+python scripts/search_companies.py --list-engines
+
 # 导出结果
 python scripts/search_companies.py "软件开发" --output search_results.json
 ```
@@ -123,6 +133,9 @@ python scripts/extract_emails.py example.com
 
 # 不使用WHOIS
 python scripts/extract_emails.py example.com --no-whois
+
+# 使用代理
+python scripts/extract_emails.py example.com --proxy http://127.0.0.1:7890
 
 # 导出结果
 python scripts/extract_emails.py example.com --output emails.json
@@ -244,15 +257,64 @@ Agent会：
 - 发送历史追踪
 - 回复状态管理
 
-## 技术实现
+## 搜索引擎
 
-### 搜索引擎
+### 支持的搜索引擎
 
-| 引擎 | 优先级 | 说明 |
-|------|--------|------|
-| DuckDuckGo | 高 | 无反爬限制，结果准确 |
-| Bing | 中 | 需要处理重定向链接 |
-| 百度 | 低 | 国内搜索，有时效性 |
+| 引擎 | 代理需求 | 地区限制 | 说明 |
+|------|----------|----------|------|
+| **Google** | ✅ 需要 | 中国、伊朗、朝鲜、俄罗斯 | 全球最大搜索引擎，结果质量最高 |
+| **DuckDuckGo** | ❌ 无需 | 无 | 注重隐私的搜索引擎，推荐使用 |
+| **Bing** | ❌ 无需 | 中国 | 微软搜索引擎，结果质量较好 |
+| **百度** | ❌ 无需 | 无 | 中国最大搜索引擎，适合中文搜索 |
+| **Searx** | ❌ 无需 | 无 | 开源元搜索引擎，聚合多个结果 |
+
+### 查看支持的搜索引擎
+
+```bash
+python scripts/search_companies.py --list-engines
+```
+
+### 指定搜索引擎
+
+```bash
+# 使用所有搜索引擎（默认）
+python scripts/search_companies.py "软件开发"
+
+# 只使用特定搜索引擎
+python scripts/search_companies.py "软件开发" --engines google,duckduckgo
+
+# 只用国内可用的搜索引擎
+python scripts/search_companies.py "软件开发" --engines baidu,duckduckgo
+```
+
+### 代理设置
+
+Google 等搜索引擎在某些地区需要代理访问：
+
+```bash
+# 方式1：命令行参数
+python scripts/search_companies.py "software company" --proxy http://127.0.0.1:7890
+
+# 方式2：环境变量
+export HTTPS_PROXY=http://127.0.0.1:7890
+export HTTP_PROXY=http://127.0.0.1:7890
+python scripts/search_companies.py "software company"
+
+# 方式3：ALL_PROXY 环境变量
+export ALL_PROXY=http://127.0.0.1:7890
+python scripts/search_companies.py "software company"
+```
+
+### 地区使用建议
+
+| 地区 | 推荐引擎 | 说明 |
+|------|----------|------|
+| 中国大陆 | 百度、DuckDuckGo、Searx | 无需代理，DuckDuckGo 结果更国际化 |
+| 中国香港/台湾 | Google、DuckDuckGo、Bing | 可直接访问 Google |
+| 美国/欧洲 | Google、DuckDuckGo、Bing | 所有引擎均可使用 |
+| 俄罗斯 | DuckDuckGo、Bing、Searx | Google 被屏蔽 |
+| 伊朗/朝鲜 | DuckDuckGo、Searx | 大部分搜索引擎被屏蔽 |
 
 ### 邮箱提取
 
@@ -307,6 +369,17 @@ prospector/
 | dnspython | >=2.3.0 | DNS验证 |
 
 ## 更新日志
+
+### v1.1.0 (2026-03-09)
+
+- 新增 Google 搜索引擎支持
+- 新增 Searx 元搜索引擎支持
+- 新增代理支持（HTTP/HTTPS/ALL_PROXY）
+- 新增 `--list-engines` 命令查看支持的搜索引擎
+- 新增 `--engines` 参数指定搜索引擎
+- 新增 `--proxy` 参数设置代理
+- 优化搜索引擎选择逻辑，按顺序尝试多个引擎
+- 添加地区限制和代理需求说明
 
 ### v1.0.0 (2026-03-09)
 

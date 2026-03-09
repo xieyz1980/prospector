@@ -65,7 +65,8 @@ metadata:
 
 #### Step 3: 搜索公司
 - 调用 scripts/search_companies.py
-- 使用多搜索引擎：Google、Bing、百度
+- 使用多搜索引擎：Google、DuckDuckGo、Bing、百度、Searx
+- 支持代理访问（Google等需要代理）
 - 返回公司名称、域名、简介
 
 #### Step 4: 排重处理
@@ -377,3 +378,34 @@ Agent会：
 5. 缓存数据会累积，形成客户资产
 6. 使用 --page 参数可以获取更多不同结果
 7. 简单查询功能在此Skill内，复杂管理建议使用CRM系统
+
+## 搜索引擎说明
+
+### 支持的搜索引擎
+
+| 引擎 | 代理需求 | 地区限制 | 说明 |
+|------|----------|----------|------|
+| Google | ✅ 需要 | 中国、伊朗、朝鲜、俄罗斯 | 结果质量最高 |
+| DuckDuckGo | ❌ 无需 | 无 | 推荐使用 |
+| Bing | ❌ 无需 | 中国 | 结果质量较好 |
+| 百度 | ❌ 无需 | 无 | 适合中文搜索 |
+| Searx | ❌ 无需 | 无 | 开源元搜索引擎 |
+
+### 代理设置
+
+如果用户在中国大陆等需要代理的地区，需要设置代理：
+
+```bash
+# 环境变量方式
+export HTTPS_PROXY=http://127.0.0.1:7890
+export HTTP_PROXY=http://127.0.0.1:7890
+
+# 或命令行参数
+python scripts/search_companies.py "software company" --proxy http://127.0.0.1:7890
+```
+
+### 地区推荐
+
+- **中国大陆**：使用百度、DuckDuckGo、Searx（无需代理）
+- **海外**：可使用所有搜索引擎，Google 效果最佳
+- **俄罗斯**：使用 DuckDuckGo、Bing、Searx（Google 被屏蔽）
